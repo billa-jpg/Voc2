@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="manifest.json">
+  <title>VocFlash</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; user-select: none; }
+    body {
+      background-color: #0b0f19; color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh; width: 100vw; overflow: hidden; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; position: relative;
+    }
+    .header-status {
+      position: absolute; top: env(safe-area-inset-top, 24px); margin-top: 10px;
+      font-size: 0.8rem; color: #94a3b8; letter-spacing: 1px; font-weight: 500;
+    }
+    .card-container {
+      width: 90vw; max-width: 380px; height: 68vh; max-height: 540px;
+      position: relative; perspective: 1000px;
+    }
+    .card {
+      width: 100%; height: 100%; position: absolute; border-radius: 24px;
+      background: #1e293b; box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.08); padding: 28px 24px;
+      display: flex; flex-direction: column; justify-content: space-between;
+      transform-style: preserve-3d; transition: transform 0.18s ease-out, opacity 0.18s ease-out, box-shadow 0.18s;
+      touch-action: none; cursor: grab;
+    }
+    .card.swipe-right-glow {
+      box-shadow: 0 0 35px rgba(34, 197, 94, 0.6);
+      border-color: #22c55e;
+    }
+    .card.swipe-left-glow {
+      box-shadow: 0 0 35px rgba(239, 68, 68, 0.6);
+      border-color: #ef4444;
+    }
+    .badge {
+      display: inline-block; align-self: flex-start; padding: 4px 10px;
+      border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+      background: rgba(255,255,255,0.06); color: #38bdf8;
+    }
+    .front-view {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .front-word { font-size: 2.6rem; font-weight: 800; letter-spacing: -0.5px; text-align: center; }
+    .front-hint { font-size: 0.85rem; color: #64748b; margin-top: 18px; }
+    .back-view {
+      flex: 1; display: none; flex-direction: column; justify-content: center; text-align: left; overflow-y: auto;
+    }
+    .header-line { font-size: 1.5rem; font-weight: 700; color: #f8fafc; margin-bottom: 6px; }
+    .part-speech { font-size: 1.1rem; color: #38bdf8; font-style: italic; margin-left: 6px; }
+    .eng-def { font-size: 0.95rem; color: #cbd5e1; margin-bottom: 16px; line-height: 1.4; }
+    .examples-list { font-size: 0.9rem; color: #94a3b8; line-height: 1.5; }
+    .example-item { margin-bottom: 10px; }
+    .highlight { color: #facc15; font-weight: 700; text-decoration: underline; }
+    .footer-hints {
+      position: absolute; bottom: env(safe-area-inset-bottom, 24px); margin-bottom: 8px;
+      display: flex; gap: 24px; font-size: 0.8rem; color: #475569;
+    }
+    .footer-hints span { display: flex; align-items: center; gap: 4px; }
+  </style>
+</head>
+<body>
+
+  <div class="header-status" id="memoryState">載入中...</div>
+
+  <div class="card-container">
+    <div class="card" id="activeCard">
+      <div class="badge" id="badgeText">載入中</div>
+
+      <!-- 正面 -->
+      <div class="front-view" id="frontView">
+        <div class="front-word" id="frontWord">...</div>
+        <div class="front-hint">點擊或上滑揭曉釋義</div>
+      </div>
+
+      <!-- 背面 (指定格式) -->
+      <div class="back-view" id="backView">
+        <div class="header-line">
+          <span id="backWord">Word</span><span class="part-speech" id="backPos">pos.</span>
+        </div>
+        <div class="eng-def" id="backDef">(English definition)</div>
+        <div class="examples-list">
+          <div class="example-item" id="example1">1. ...</div>
+          <div class="example-item" id="example2">2. ...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-hints">
+    <span>← 左滑 不熟</span>
+    <span>↑ 點擊 翻面</span>
+    <span>右滑 記住 →</span>
+  </div>
+
+  <!-- 模組化單字資料檔 (由淺入深) -->
+  <script src="./level1_2.js"></script>
+  <script src="./level3.js"></script>
+  <script src="./level4.js"></script>
+  <script src="./level5.js"></script>
+  <script src="./level6.js"></script>
+
+  <script>
+    // ===== 1. 間隔複習演算法 (SM-2 / 艾賓浩斯間隔曲線) =====
+    const INTERVALS = [1, 2, 4, 7, 15, 30, 60]; // 複習天數階梯
+    const STORAGE_KEY = 'voc_srs_data_v1';
+    let srsData = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+
+    function saveSRS() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(srsData));
+    }
+
+    // ===== 2. 隊列構建邏輯 =====
+    let fullVocab = [];
+    let activeQueue = [];
+    let currentItem = null;
+    let isFlipped = false;
+
+    function initDatabase() {
+      fullVocab = [
+        ...(window.VOCAB_L1_2 || []),
+        ...(window.VOCAB_L3 || []),
+        ...(window.VOCAB_L4 || []),
+        ...(window.VOCAB_L5 || []),
+        ...(window.VOCAB_L6 || [])
+      ];
+
+      const now = Date.now();
+      const dueQueue = [];
+      const unlearnedQueue = [];
+
+      fullVocab.forEach(item => {
+        const record = srsData[item.word];
+        if (!record) {
+          unlearnedQueue.push(item);
+        } else if (record.dueDate <= now) {
+          dueQueue.push(item);
+        }
+      });
+
+      // 優先權：逾期未複習的優先，若無則注入新單字，混洗以隨機抽測
+      dueQueue.sort(() => Math.random() - 0.5);
+      unlearnedQueue.sort(() => Math.random() - 0.5);
+      activeQueue = dueQueue.concat(unlearnedQueue);
+
+      if (activeQueue.length === 0) {
+        // 如果全部且未到期，全庫隨機無限循環
+        activeQueue = [...fullVocab].sort(() => Math.random() - 0.5);
+      }
+      pickNextCard();
+    }
+
+    // ===== 3. 自動美式語音朗讀 =====
+    function speak(text) {
+      if (!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      u.rate = 0.95;
+      window.speechSynthesis.speak(u);
+    }
+
+    // ===== 4. 例句關鍵字高亮 =====
+    function highlightWord(sentence, targetWord) {
+      if (!sentence) return '';
+      // 匹配單字字根開頭（如 apply, applied, applying）
+      const base = targetWord.length > 4 ? targetWord.slice(0, -2) : targetWord;
+      const regex = new RegExp(`\\b(${base}[a-zA-Z]*)\\b`, 'gi');
+      return sentence.replace(regex, '<span class="highlight">$1</span>');
+    }
+
+    // ===== 5. 卡片切換與渲染 =====
+    const card = document.getElementById('activeCard');
+    const memoryStateEl = document.getElementById('memoryState');
+    const badgeTextEl = document.getElementById('badgeText');
+    const frontView = document.getElementById('frontView');
+    const backView = document.getElementById('backView');
+
+    function renderCard(item) {
+      currentItem = item;
+      isFlipped = false;
+
+      // 重置卡片姿態
+      card.style.transition = 'none';
+      card.style.transform = 'translate(0, 0) rotate(0deg)';
+      card.className = 'card';
+
+      // SRS 記憶狀態標註
+      const record = srsData[item.word];
+      if (!record || record.repetitions === 0) {
+        memoryStateEl.innerText = "初次學習";
+        badgeTextEl.innerText = "NEW";
+        badgeTextEl.style.color = "#38bdf8";
+      } else {
+        const daysAgo = Math.max(1, Math.floor((Date.now() - record.lastReviewed) / (1000 * 60 * 60 * 24)));
+        memoryStateEl.innerText = `${daysAgo} 天前複習`;
+        badgeTextEl.innerText = `LV.${record.repetitions}`;
+        badgeTextEl.style.color = "#a855f7";
+      }
+
+      // 填入正面
+      document.getElementById('frontWord').innerText = item.word;
+
+      // 填入背面（嚴格遵循指定格式）
+      document.getElementById('backWord').innerText = item.word;
+      document.getElementById('backPos').innerText = item.pos || '';
+      document.getElementById('backDef').innerText = `(${item.def || ''})`;
+      document.getElementById('example1').innerHTML = `1. ${highlightWord(item.ex1 || '', item.word)}`;
+      document.getElementById('example2').innerHTML = `2. ${highlightWord(item.ex2 || '', item.word)}`;
+
+      frontView.style.display = 'flex';
+      backView.style.display = 'none';
+
+      // 0.18 秒平滑進場與自動美式語音
+      setTimeout(() => {
+        card.style.transition = 'transform 0.18s ease-out, box-shadow 0.18s ease-out';
+        speak(item.word);
+      }, 20);
+    }
+
+    function flipCard() {
+      if (isFlipped) return;
+      isFlipped = true;
+      frontView.style.display = 'none';
+      backView.style.display = 'flex';
+    }
+
+    function pickNextCard() {
+      if (activeQueue.length === 0) {
+        initDatabase();
+        return;
+      }
+      const next = activeQueue.shift();
+      renderCard(next);
+    }
+
+    // ===== 6. 艾賓浩斯間隔計算邏輯 =====
+    function handleAnswer(known) {
+      const now = Date.now();
+      let record = srsData[currentItem.word] || { repetitions: 0, interval: 0, lastReviewed: now, dueDate: now };
+
+      if (known) {
+        const step = Math.min(record.repetitions, INTERVALS.length - 1);
+        const days = INTERVALS[step];
+        record.repetitions += 1;
+        record.interval = days;
+        record.lastReviewed = now;
+        record.dueDate = now + days * 24 * 60 * 60 * 1000;
+        srsData[currentItem.word] = record;
+        saveSRS();
+      } else {
+        // 不熟：歸零重學，並插回隊列前方（3~5張後再次出現循環記憶）
+        record.repetitions = 0;
+        record.interval = 0;
+        record.lastReviewed = now;
+        record.dueDate = now;
+        srsData[currentItem.word] = record;
+        saveSRS();
+
+        const insertIndex = Math.min(3, activeQueue.length);
+        activeQueue.splice(insertIndex, 0, currentItem);
+      }
+      setTimeout(pickNextCard, 180);
+    }
+
+    // ===== 7. 平板 / 手機手勢處理 (Swipe & Tap) =====
+    let startX = 0, startY = 0, currentX = 0, currentY = 0;
+    let isSwiping = false;
+
+    card.addEventListener('pointerdown', (e) => {
+      isSwiping = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      currentX = startX;
+      currentY = startY;
+      card.style.transition = 'none';
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!isSwiping) return;
+      currentX = e.clientX;
+      currentY = e.clientY;
+      const deltaX = currentX - startX;
+      const deltaY = currentY - startY;
+
+      // 旋轉與位移跟隨手指
+      const rotate = deltaX * 0.08;
+      card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${rotate}deg)`;
+
+      // 滑動光暈回饋
+      if (deltaX > 40) {
+        card.classList.add('swipe-right-glow');
+        card.classList.remove('swipe-left-glow');
+      } else if (deltaX < -40) {
+        card.classList.add('swipe-left-glow');
+        card.classList.remove('swipe-right-glow');
+      } else {
+        card.classList.remove('swipe-right-glow', 'swipe-left-glow');
+      }
+    });
+
+    window.addEventListener('pointerup', (e) => {
+      if (!isSwiping) return;
+      isSwiping = false;
+
+      const deltaX = currentX - startX;
+      const deltaY = currentY - startY;
+      const distance = Math.hypot(deltaX, deltaY);
+
+      card.style.transition = 'transform 0.18s ease-out, box-shadow 0.18s ease-out, opacity 0.18s ease-out';
+
+      // 1. 點擊 或 上滑翻牌
+      if (distance < 10 || (deltaY < -60 && Math.abs(deltaX) < 40)) {
+        card.style.transform = 'translate(0, 0) rotate(0deg)';
+        card.classList.remove('swipe-right-glow', 'swipe-left-glow');
+        flipCard();
+        return;
+      }
+
+      // 2. 右滑：記住了（綠光飛出）
+      if (deltaX > 90) {
+        card.style.transform = `translate(${window.innerWidth + 100}px, ${deltaY}px) rotate(30deg)`;
+        card.style.opacity = '0';
+        handleAnswer(true);
+        return;
+      }
+
+      // 3. 左滑：不熟（紅光飛出，插回循環）
+      if (deltaX < -90) {
+        card.style.transform = `translate(${-window.innerWidth - 100}px, ${deltaY}px) rotate(-30deg)`;
+        card.style.opacity = '0';
+        handleAnswer(false);
+        return;
+      }
+
+      // 滑動距離不足，回彈復原
+      card.style.transform = 'translate(0, 0) rotate(0deg)';
+      card.classList.remove('swipe-right-glow', 'swipe-left-glow');
+    });
+
+    window.addEventListener('DOMContentLoaded', initDatabase);
+  </script>
+</body>
+</html>
+
